@@ -1,0 +1,4 @@
+services:
+  entity_ref_dependency.dependency_service:
+    class: Drupal\entity_ref_dependency\Services\DependencyService
+    arguments: ['@database', '@entity_type.manager']

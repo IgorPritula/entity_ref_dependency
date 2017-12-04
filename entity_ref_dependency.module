@@ -1,0 +1,53 @@
+<?php
+
+/**
+ * @file
+ * Main module file.
+ */
+
+use Drupal\Core\Entity\EntityInterface;
+
+/**
+ * Implements hook_entity_update().
+ */
+function entity_ref_dependency_entity_update(EntityInterface $entity) {
+  $allow_entity = ['node', 'taxonomy_term', 'highlight', 'slide', 'video'];
+  $type = $entity->getEntityTypeId();
+  if (in_array($type, $allow_entity)) {
+    $dependency_service = \Drupal::service('entity_ref_dependency.dependency_service');
+    $dependency_service->deleteEntityIndex($entity);
+    $dependency_service->buildEntityIndex($entity);
+  }
+}
+
+/**
+ * Implements hook_entity_insert().
+ */
+function entity_ref_dependency_entity_insert(EntityInterface $entity) {
+  $allow_entity = ['node', 'taxonomy_term', 'highlight', 'slide', 'video'];
+  $type = $entity->getEntityTypeId();
+  if (in_array($type, $allow_entity)) {
+    $dependency_service = \Drupal::service('entity_ref_dependency.dependency_service');
+    $dependency_service->buildEntityIndex($entity);
+  }
+}
+
+/**
+ * Implements hook_entity_predelete().
+ */
+function entity_ref_dependency_entity_predelete(EntityInterface $entity) {
+  $allow_entity = [
+    'document',
+    'node',
+    'taxonomy_term',
+    'widget',
+    'highlight',
+    'slide',
+    'video',
+  ];
+  $type = $entity->getEntityTypeId();
+  if (in_array($type, $allow_entity)) {
+    \Drupal::service('entity_ref_dependency.dependency_service')
+      ->deleteReferenceItem($entity);
+  }
+}

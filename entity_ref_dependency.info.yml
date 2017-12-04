@@ -1,0 +1,12 @@
+type: module
+name: Entity reference dependency
+description: 'Module provide additional functionality for entity reference field'
+package: DS Avocats
+tags:
+ - project
+ - dsa
+ - core
+ - system
+dependencies:
+ - field
+core: '8.x'

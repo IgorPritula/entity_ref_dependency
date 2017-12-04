@@ -1,0 +1,53 @@
+<?php
+
+/**
+ * @file
+ * Install and update functions.
+ */
+
+/**
+ * Implements hook_schema().
+ */
+function entity_ref_dependency_schema() {
+  $schema['entity_ref_dependency'] = [
+    'description' => 'Storage for dependency between entities.',
+    'fields' => [
+      'entity_type_id' => [
+        'description' => 'The type id of entity (node, taxonomy_term) which contains entity reference.',
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => '',
+      ],
+      'entity_id' => [
+        'description' => 'The id of entity which contains entity reference.',
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => 0,
+      ],
+      'field_name' => [
+        'description' => 'The name of entity reference field.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ],
+      'ref_entity_type_id' => [
+        'description' => 'The type id of referenced entity (node, taxonomy_term).',
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => '',
+      ],
+      'ref_entity_id' => [
+        'description' => 'The id of referenced entity',
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => 0,
+      ],
+    ],
+  ];
+  return $schema;
+}
