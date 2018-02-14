@@ -1,7 +1,7 @@
 type: module
 name: Entity reference dependency
 description: 'Module provide additional functionality for entity reference field'
-package: Saipol Feedmarket
+package: Custom
 tags:
  - core
  - system
