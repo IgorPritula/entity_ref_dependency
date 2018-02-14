@@ -6,14 +6,16 @@
  */
 
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Form\FormStateInterface;
 
 /**
  * Implements hook_entity_update().
  */
 function entity_ref_dependency_entity_update(EntityInterface $entity) {
-  $allow_entity = ['node', 'taxonomy_term', 'highlight', 'slide', 'video'];
+  $entity_info = \Drupal::service('entity_ref_dependency.entity_info');
+  $allow_entity = $entity_info->getFieldableEntities();
   $type = $entity->getEntityTypeId();
-  if (in_array($type, $allow_entity)) {
+  if (in_array($type, array_keys($allow_entity))) {
     $dependency_service = \Drupal::service('entity_ref_dependency.dependency_service');
     $dependency_service->deleteEntityIndex($entity);
     $dependency_service->buildEntityIndex($entity);
@@ -24,9 +26,10 @@ function entity_ref_dependency_entity_update(EntityInterface $entity) {
  * Implements hook_entity_insert().
  */
 function entity_ref_dependency_entity_insert(EntityInterface $entity) {
-  $allow_entity = ['node', 'taxonomy_term', 'highlight', 'slide', 'video'];
+  $entity_info = \Drupal::service('entity_ref_dependency.entity_info');
+  $allow_entity = $entity_info->getFieldableEntities();
   $type = $entity->getEntityTypeId();
-  if (in_array($type, $allow_entity)) {
+  if (in_array($type, array_keys($allow_entity))) {
     $dependency_service = \Drupal::service('entity_ref_dependency.dependency_service');
     $dependency_service->buildEntityIndex($entity);
   }
@@ -36,18 +39,159 @@ function entity_ref_dependency_entity_insert(EntityInterface $entity) {
  * Implements hook_entity_predelete().
  */
 function entity_ref_dependency_entity_predelete(EntityInterface $entity) {
-  $allow_entity = [
-    'document',
-    'node',
-    'taxonomy_term',
-    'widget',
-    'highlight',
-    'slide',
-    'video',
-  ];
+  $entity_info = \Drupal::service('entity_ref_dependency.entity_info');
+  $allow_entity = $entity_info->getFieldableEntities();
   $type = $entity->getEntityTypeId();
-  if (in_array($type, $allow_entity)) {
+  if (in_array($type, array_keys($allow_entity))) {
     \Drupal::service('entity_ref_dependency.dependency_service')
       ->deleteReferenceItem($entity);
   }
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function entity_ref_dependency_form_alter(&$form, FormStateInterface $form_state, $form_id) {
+  $depend_config = \Drupal::config('entity_ref_dependency.allow_delete')->get('allow_cascade_delete');
+  if (!$depend_config) {
+    return;
+  }
+
+  $form_object = $form_state->getFormObject();
+  $class = 'Drupal\Core\Entity\ContentEntityConfirmFormBase';
+
+  if (is_subclass_of($form_object, $class)) {
+    $entity = $form_object->getEntity();
+    $entity_info = \Drupal::service('entity_ref_dependency.entity_info');
+    $allow_entity = $entity_info->getFieldableEntities();
+    $type = $entity->getEntityTypeId();
+    if (in_array($type, array_keys($allow_entity))) {
+      $common_count = [];
+      $dep_entities = \Drupal::service('entity_ref_dependency.dependency_service')
+        ->dependEntities($entity, TRUE, $common_count);
+      unset($common_count[0]);
+      if (!$dep_entities) {
+        $form['alert_dependency'] = [
+          '#type' => 'details',
+          '#title' => t('Dependency'),
+          'depend_list' => [
+            '#markup' => "No dependencies."
+          ],
+        ];
+        return;
+      }
+      $form_state->addBuildInfo('entities_to_delete', $common_count);
+      $alert = entity_ref_dependency_message_alert($dep_entities, $common_count);
+      $alert['cascade_delete'] = [
+        '#type' => 'submit',
+        '#value' => t("Delete with all dependencies"),
+        '#submit' => ['entity_ref_dependency_cascade_delete_submit'],
+      ];
+      $form['alert_dependency'] = $alert;
+    }
+  }
+}
+
+/**
+ * Prepare alert message.
+ */
+function entity_ref_dependency_message_alert($dep_entities, $common_count) {
+  $entities_type = [];
+  foreach ($dep_entities as $entities) {
+    if (!is_array($entities)) {
+      continue;
+    }
+    entity_ref_dependency_count_entities_recursive($entities, $entities_type);
+  }
+
+  $message = [
+    '#theme' => 'item_list',
+    '#list_type' => 'ul',
+    '#title' => t('@count entities are depend on this entity.', ['@count' => count($common_count)]),
+    '#wrapper_attributes' => ['style' => 'color:red;'],
+  ];
+  foreach ($entities_type as $entity_type_id => $count) {
+    $message['#items'][] = entity_ref_dependency_message_items($entity_type_id, $count);
+  }
+
+  return [
+    '#type' => 'details',
+    '#title' => t('Dependency'),
+    'depend_list' => $message,
+  ];
+}
+
+/**
+ * Description.
+ */
+function entity_ref_dependency_count_entities_recursive(&$entities, &$entities_type = []) {
+  foreach ($entities as $key => $entity) {
+    if (is_array($entity)) {
+      $entity_type = $entity['#entity']->getEntityTypeId();
+      $bundle = $entity['#entity']->bundle();
+      if (!isset($entities_type[$entity_type . '__' . $bundle])) {
+        $entities_type[$entity_type . '__' . $bundle]['#count'] = 1;
+      }
+      elseif (isset($entities_type[$entity_type . '__' . $bundle]) && !is_array($entities_type[$entity_type . '__' . $bundle])) {
+        $count = $entities_type[$entity_type . '__' . $bundle] + 1;
+        $entities_type[$entity_type . '__' . $bundle] = ['#count' => $count];
+      }
+      elseif (isset($entities_type[$entity_type . '__' . $bundle]) && is_array($entities_type[$entity_type . '__' . $bundle])) {
+        $entities_type[$entity_type . '__' . $bundle]['#count']++;
+      }
+      foreach ($entity as $type => $items) {
+        if ($type == '#count' || $type == '#entity') {
+          continue;
+        }
+        entity_ref_dependency_count_entities_recursive($entities[$key][$type], $entities_type[$entity_type . '__' . $bundle]);
+      }
+    }
+    elseif (is_object($entity)) {
+      $entity_type = $entity->getEntityTypeId();
+      $bundle = $entity->bundle();
+      if (!isset($entities_type[$entity_type . '__' . $bundle])) {
+        $entities_type[$entity_type . '__' . $bundle] = 1;
+      }
+      elseif (isset($entities_type[$entity_type . '__' . $bundle]) && !is_array($entities_type[$entity_type . '__' . $bundle])) {
+        $entities_type[$entity_type . '__' . $bundle]++;
+      }
+      elseif (isset($entities_type[$entity_type . '__' . $bundle]) && is_array($entities_type[$entity_type . '__' . $bundle])) {
+        $entities_type[$entity_type . '__' . $bundle]['#count']++;
+      }
+    }
+  }
+}
+
+/**
+ * Description.
+ */
+function entity_ref_dependency_message_items($entity_type_bundle, &$count) {
+  $entity_type_bundle = explode("__", $entity_type_bundle);
+  $entity_type = \Drupal::entityTypeManager()->getDefinition($entity_type_bundle[0]);
+  $bundle_entity_type = $entity_type->get('bundle_entity_type');
+  $entity_type_label = $entity_type->getLabel();
+  if ($bundle_entity_type) {
+    $bundle_label = \Drupal::entityTypeManager()->getStorage($bundle_entity_type)->load($entity_type_bundle[1])->label();
+  }
+  else {
+    $bundle_label = "";
+  }
+  if (!is_array($count)) {
+    $item = $entity_type_label . ' ' . $bundle_label . " ($count)";
+  }
+  else {
+    $item = [
+      '#theme' => 'item_list',
+      '#list_type' => 'ul',
+      '#title' => $entity_type_label . ' ' . $bundle_label . " (" . $count['#count'] . ")",
+      '#wrapper_attributes' => ['style' => 'color:red;'],
+    ];
+    foreach ($count as $entity_type_bundle => $counts) {
+      if ($entity_type_bundle == "#count") {
+        continue;
+      }
+      $item['#items'][] = entity_ref_dependency_message_items($entity_type_bundle, $counts);
+    }
+  }
+  return $item;
 }

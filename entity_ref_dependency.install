@@ -13,14 +13,14 @@ function entity_ref_dependency_schema() {
     'description' => 'Storage for dependency between entities.',
     'fields' => [
       'entity_type_id' => [
-        'description' => 'The type id of entity (node, taxonomy_term) which contains entity reference.',
+        'description' => 'The type id of entity (node, taxonomy_term).',
         'type' => 'varchar_ascii',
         'length' => 64,
         'not null' => TRUE,
         'default' => '',
       ],
       'entity_id' => [
-        'description' => 'The id of entity which contains entity reference.',
+        'description' => 'The id of entity.',
         'type' => 'varchar_ascii',
         'length' => 64,
         'not null' => TRUE,
@@ -28,8 +28,8 @@ function entity_ref_dependency_schema() {
       ],
       'field_name' => [
         'description' => 'The name of entity reference field.',
-        'type' => 'varchar',
-        'length' => 255,
+        'type' => 'varchar_ascii',
+        'length' => 64,
         'not null' => TRUE,
         'default' => '',
       ],
@@ -48,6 +48,44 @@ function entity_ref_dependency_schema() {
         'default' => 0,
       ],
     ],
+    'primary key' => [
+      'entity_type_id',
+      'entity_id',
+      'field_name',
+      'ref_entity_type_id',
+      'ref_entity_id',
+    ],
   ];
   return $schema;
+}
+
+/**
+ * Implements hook_install().
+ */
+function entity_ref_dependency_install() {
+  $entity_info = \Drupal::service('entity_ref_dependency.entity_info');
+  $entities = $entity_info->getFieldableEntities();
+
+  foreach ($entities as $entity_type_id => $entity_type) {
+    $bundle_entity_type = $entity_type->get('bundle_entity_type');
+    if ($bundle_entity_type != NULL) {
+      $entities[$entity_type_id] = $entity_info->getEntityBundles($bundle_entity_type);
+    }
+    else {
+      $entities[$entity_type_id] = NULL;
+    }
+  }
+
+  $dep_service = \Drupal::service('entity_ref_dependency.dependency_service');
+  foreach ($entities as $entity_id => $bundles) {
+    if ($bundles != NULL) {
+      foreach ($bundles as $bundle_id => $bundle) {
+        $dep_service->buildEntitiesIndex($entity_id, $bundle_id);
+      }
+    }
+    else {
+      $dep_service->buildEntitiesIndex($entity_id, $entity_id);
+    }
+  }
+
 }

@@ -5,6 +5,7 @@ namespace Drupal\entity_ref_dependency\Services;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Database\Connection;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\Config\ConfigFactoryInterface;
 
 /**
  * Class DependencyService.
@@ -18,12 +19,7 @@ class DependencyService {
    *
    * @var array
    */
-  protected $allowTargetType = [
-    'document',
-    'node',
-    'taxonomy_term',
-    'widget',
-  ];
+  protected $allowedEntityTypes = [];
 
   /**
    * Database connection.
@@ -41,11 +37,27 @@ class DependencyService {
   protected $entityTypeManager;
 
   /**
+   * EntityReferenceInfoHelper object.
+   *
+   * @var \Drupal\entity_ref_dependency\Services\EntityReferenceInfoHelper
+   */
+  protected $entityRefHelper;
+
+  /**
+   * Config factory.
+   *
+   * @var \Drupal\Core\Config\ConfigFactoryInterface
+   */
+  protected $configFactory;
+
+  /**
    * DsaCoreJobListingHelper constructor.
    */
-  public function __construct(Connection $database, EntityTypeManagerInterface $entity_type_manager) {
+  public function __construct(Connection $database, EntityTypeManagerInterface $entity_type_manager, EntityReferenceInfoHelper $entity_ref_helper, ConfigFactoryInterface $config_factory) {
     $this->database = $database;
     $this->entityTypeManager = $entity_type_manager;
+    $this->entityRefHelper = $entity_ref_helper;
+    $this->configFactory = $config_factory;
   }
 
   /**
@@ -56,24 +68,23 @@ class DependencyService {
    *
    * @param \Drupal\Core\Entity\EntityInterface $entity
    *   Some entity (node, taxonomy term)
+   * @param mixed $reference_fields
+   *   Entity reference field names.
    */
-  public function buildEntityIndex(EntityInterface $entity) {
+  public function buildEntityIndex(EntityInterface $entity, $reference_fields = NULL) {
+    if (!$reference_fields) {
+      $reference_fields = $this->entityRefHelper->getEntityReferenceFields($entity->getEntityTypeId(), $entity->bundle());
+      if (!$reference_fields) {
+        return;
+      }
+    }
     $entity_ref_id_all = [];
-    $entity_reference_class = 'Drupal\Core\Field\Plugin\Field\FieldType\EntityReferenceItem';
-    foreach ($entity->getFieldDefinitions() as $field) {
-      $field_name = $field->getName();
-      $class = $field->getItemDefinition()->getClass();
-      $is_entity_reference_class = ($class === $entity_reference_class) || is_subclass_of($class, $entity_reference_class);
-
-      $allow_target_type = $this->allowTargetType;
-      // Check if storage does not provide by custom module.
-      $storoge = $field->getFieldStorageDefinition()->hasCustomStorage();
-      if ($is_entity_reference_class && in_array($field->getSetting('target_type'), $allow_target_type) && !$storoge) {
-        $target_id = $field->getSetting('target_type');
-        foreach ($entity->$field_name as $item) {
-          if (!$item->isEmpty()) {
-            $entity_ref_id_all[$target_id][$field_name][] = $item->target_id;
-          }
+    foreach ($reference_fields as $field_name) {
+      $field_def = $entity->$field_name->getFieldDefinition();
+      $target_id = $field_def->getSetting('target_type');
+      foreach ($entity->$field_name as $item) {
+        if (!$item->isEmpty()) {
+          $entity_ref_id_all[$target_id][$field_name][] = $item->target_id;
         }
       }
     }
@@ -94,11 +105,11 @@ class DependencyService {
       foreach ($entity_ref_id_all as $ref_entity_type_id => $fields) {
         $query_values['ref_entity_type_id'] = $ref_entity_type_id;
 
-        foreach ($fields as $field_name => $field_ids) {
+        foreach ($fields as $field_name => $entity_ids) {
           $query_values['field_name'] = $field_name;
 
-          foreach ($field_ids as $field_id) {
-            $query_values['ref_entity_id'] = $field_id;
+          foreach (array_unique($entity_ids) as $entity_id) {
+            $query_values['ref_entity_id'] = $entity_id;
             $query->values($query_values);
           }
         }
@@ -157,6 +168,122 @@ class DependencyService {
       $this->deleteRefEntityIndex($entity);
     }
     $this->deleteEntityIndex($entity);
+  }
+
+  /**
+   * Description.
+   */
+  public function buildEntitiesIndex($entity_id, $bundle_id) {
+    $reference_fields = $this->entityRefHelper->getEntityReferenceFields($entity_id, $bundle_id);
+    if (!$reference_fields) {
+      return;
+    }
+
+    $bundle_key = $this->entityTypeManager->getDefinition($entity_id)->getKey('bundle');
+    if ($bundle_key) {
+      $entities = $this->entityTypeManager->getStorage($entity_id)
+        ->loadByProperties([$bundle_key => $bundle_id]);
+    }
+    else {
+      $entities = $this->entityTypeManager->getStorage($entity_id)->loadMultiple();
+    }
+
+    foreach ($entities as $entity) {
+      $this->buildEntityIndex($entity, $reference_fields);
+    }
+  }
+
+  /**
+   * Get depend entityies.
+   */
+  public function dependEntities(EntityInterface $entity, $recursion = FALSE, &$common_count = []) {
+    $dep_entities = $this->getDependEntities($entity->getEntityTypeId(), $entity->id(), TRUE, $common_count);
+    if ($dep_entities && is_array($dep_entities)) {
+      foreach ($dep_entities as $key => $entities) {
+        if ($key == '#entity') {
+          continue;
+        }
+        $this->loadEntities($key, $dep_entities[$key]);
+      }
+      return $dep_entities;
+    }
+    return [];
+  }
+
+  /**
+   * Description.
+   */
+  protected function getDependEntities($entity_type_id, $entity_id, $recursion = FALSE, &$entity_used = []) {
+    if (in_array($entity_type_id . '_' . $entity_id, $entity_used)) {
+      return $entity_id;
+    }
+    $entity_used[] = $entity_type_id . '_' . $entity_id;
+
+    $allowed_entity_type = $this->getAllowedEntityType();
+    if (!$allowed_entity_type) {
+      return $entity_id;
+    }
+
+    $query = $this->database->select('entity_ref_dependency', 'erd')
+      ->condition('erd.ref_entity_type_id', $entity_type_id)
+      ->condition('erd.ref_entity_id', $entity_id)
+      ->condition('entity_type_id', $allowed_entity_type, 'IN')
+      ->fields('erd', ['entity_type_id', 'entity_id']);
+    $result = $query->execute()->fetchAll();
+    if ($result != NULL) {
+      $dep_entities = ['#entity' => $entity_id];
+      if (!$recursion) {
+        foreach ($result as $row) {
+          $dep_entities[$row->entity_type_id][$row->entity_id] = $row->entity_id;
+        }
+        return $dep_entities;
+      }
+      else {
+        foreach ($result as $row) {
+          $dep_entities[$row->entity_type_id][$row->entity_id] = $this->getDependEntities($row->entity_type_id, $row->entity_id, TRUE, $entity_used);
+        }
+        return $dep_entities;
+      }
+    }
+    return $entity_id;
+  }
+
+  /**
+   * Description.
+   */
+  protected function loadEntities($entity_type, array &$all_entities) {
+    $entity_to_load = [];
+    $related_entities = [];
+    foreach ($all_entities as $key => $entity) {
+      if (is_array($entity)) {
+        $related_entities[$key] = $entity;
+      }
+      else {
+        $entity_to_load[$key] = $entity;
+      }
+    }
+
+    $entity_to_load = $this->entityTypeManager->getStorage($entity_type)->loadMultiple($entity_to_load);
+    $all_entities = $entity_to_load + $all_entities;
+    foreach ($related_entities as $key => $entities) {
+      $all_entities[$key]['#entity'] = $this->entityTypeManager->getStorage($entity_type)->load($entities['#entity']);
+      foreach ($entities as $deep_entity_type => $deep_entities) {
+        if ($deep_entity_type == '#entity') {
+          continue;
+        }
+        $this->loadEntities($deep_entity_type, $all_entities[$key][$deep_entity_type]);
+      }
+    }
+  }
+
+  /**
+   * Description.
+   */
+  protected function getAllowedEntityType() {
+    if ($this->allowedEntityTypes) {
+      return $this->allowedEntityTypes;
+    }
+    return $this->allowedEntityTypes = $this->configFactory->get('entity_ref_dependency.allow_delete')->get('allowed_entity_types');
   }
 
 }

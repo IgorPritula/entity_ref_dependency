@@ -1,4 +1,7 @@
 services:
+  entity_ref_dependency.entity_info:
+    class: Drupal\entity_ref_dependency\Services\EntityReferenceInfoHelper
+    arguments: ['@entity_field.manager', '@entity_type.manager', '@database']
   entity_ref_dependency.dependency_service:
     class: Drupal\entity_ref_dependency\Services\DependencyService
-    arguments: ['@database', '@entity_type.manager']
+    arguments: ['@database', '@entity_type.manager', '@entity_ref_dependency.entity_info', '@config.factory']

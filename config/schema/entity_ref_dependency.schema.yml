@@ -1,0 +1,13 @@
+entity_ref_dependency.allow_delete:
+  type: config_object
+  label: 'New Third Parties'
+  mapping:
+    allow_cascade_delete:
+      type: int
+      label: 'Allow cascade deleting'
+    allowed_entity_types:
+      type: sequence
+      label: 'Allowed entity types for cascade deleting'
+      sequence:
+        - type: string
+          label: 'Entity type machine name'

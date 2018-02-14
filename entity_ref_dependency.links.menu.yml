@@ -1,0 +1,5 @@
+entity_ref_dependency.erd_configuration:
+  title: 'Entity dependency settings'
+  route_name: entity_ref_dependency.erd_configuration
+  parent: system.admin_config_content
+  weight: 101
