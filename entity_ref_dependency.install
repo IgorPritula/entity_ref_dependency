@@ -55,6 +55,12 @@ function entity_ref_dependency_schema() {
       'ref_entity_type_id',
       'ref_entity_id',
     ],
+    'indexes' => [
+      'ref_type_id' => [
+        'ref_entity_type_id',
+        'ref_entity_id',
+      ],
+    ],
   ];
   return $schema;
 }

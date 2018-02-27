@@ -192,17 +192,21 @@ class DependencyConfigForm extends ConfigFormBase {
       $entities_id = $entity_info->entityTypeManager->getStorage($entity_type_id)->getQuery()
         ->condition($context['sandbox']['bundle_key'], $bundle_id)
         ->condition($context['sandbox']['id_key'], $context['sandbox']['current_id'], '>')
-        ->range(0, 50)
+        ->range(0, 100)
         ->execute();
       $entities = $entity_info->entityTypeManager->getStorage($entity_type_id)->loadMultiple($entities_id);
     }
     else {
       $entities_id = $entity_info->entityTypeManager->getStorage($entity_type_id)->getQuery()
         ->condition($context['sandbox']['id_key'], $context['sandbox']['current_id'], '>')
-        ->range(0, 50)
+        ->range(0, 100)
         ->execute();
       $entities = $entity_info->entityTypeManager->getStorage($entity_type_id)->loadMultiple($entities_id);
     }
+    if (!$entities) {
+      return;
+    }
+
     $dep_service = \Drupal::service('entity_ref_dependency.dependency_service');
     foreach ($entities as $id => $entity) {
       $dep_service->buildEntityIndex($entity, $context['sandbox']['reference_fields']);

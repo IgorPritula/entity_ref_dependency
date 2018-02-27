@@ -81,6 +81,18 @@ function entity_ref_dependency_form_alter(&$form, FormStateInterface $form_state
         ];
         return;
       }
+      elseif ($dep_entities === "TOO_MANY_DEPENDENCY") {
+        $alert = [
+          '#type' => 'details',
+          '#title' => t('Dependency'),
+          'depend_list' => [
+            '#markup' => t("Entity has more then 5000 depend entities. Can't show dependencies.") . '</br>',
+          ],
+        ];
+      }
+      else {
+        $alert = entity_ref_dependency_message_alert($dep_entities, $common_count);
+      }
 
       $items = \Drupal::service('database')->select('queue', 'q')
         ->condition('q.name', 'entity_ref_delete_entities')
@@ -96,7 +108,6 @@ function entity_ref_dependency_form_alter(&$form, FormStateInterface $form_state
       }
 
       $form_state->addBuildInfo('entities_to_delete', $common_count);
-      $alert = entity_ref_dependency_message_alert($dep_entities, $common_count);
 
       if (!$queue_item_id) {
         $alert['cascade_delete'] = [

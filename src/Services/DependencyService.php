@@ -222,6 +222,9 @@ class DependencyService {
    */
   public function dependEntities(EntityInterface $entity, $recursion = FALSE, array &$common_count = []) {
     $dep_entities = $this->getDependEntities($entity->getEntityTypeId(), $entity->id(), $recursion, $common_count);
+    if (count($common_count) > 5000) {
+      return "TOO_MANY_DEPENDENCY";
+    }
     if ($dep_entities && is_array($dep_entities)) {
       foreach ($dep_entities as $key => $entities) {
         if ($key == '#entity') {
