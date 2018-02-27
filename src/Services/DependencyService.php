@@ -41,7 +41,7 @@ class DependencyService {
    *
    * @var \Drupal\entity_ref_dependency\Services\EntityReferenceInfoHelper
    */
-  protected $entityRefHelper;
+  public $entityRefHelper;
 
   /**
    * Config factory.
@@ -120,6 +120,9 @@ class DependencyService {
 
   /**
    * Delete index data in {entity_ref_dependency} table.
+   *
+   * @param \Drupal\Core\Entity\EntityInterface $entity
+   *   Entity object.
    */
   public function deleteEntityIndex(EntityInterface $entity) {
     $this->database->delete('entity_ref_dependency')
@@ -130,6 +133,9 @@ class DependencyService {
 
   /**
    * Delete index data in {entity_ref_dependency} table for reference entity.
+   *
+   * @param \Drupal\Core\Entity\EntityInterface $entity
+   *   Entity object.
    */
   public function deleteRefEntityIndex(EntityInterface $entity) {
     $this->database->delete('entity_ref_dependency')
@@ -140,6 +146,9 @@ class DependencyService {
 
   /**
    * Delete reference items.
+   *
+   * @param \Drupal\Core\Entity\EntityInterface $entity
+   *   Entity object.
    */
   public function deleteReferenceItem(EntityInterface $entity) {
     $query = $this->database->select('entity_ref_dependency', 'erd')
@@ -171,7 +180,12 @@ class DependencyService {
   }
 
   /**
-   * Description.
+   * Perform indexing of dependencies for certain bundle.
+   *
+   * @param string $entity_id
+   *   Entity type machine name.
+   * @param string $bundle_id
+   *   Bundle machine name.
    */
   public function buildEntitiesIndex($entity_id, $bundle_id) {
     $reference_fields = $this->entityRefHelper->getEntityReferenceFields($entity_id, $bundle_id);
@@ -194,10 +208,20 @@ class DependencyService {
   }
 
   /**
-   * Get depend entityies.
+   * Get depend entities.
+   *
+   * @param \Drupal\Core\Entity\EntityInterface $entity
+   *   Entity object.
+   * @param bool $recursion
+   *   Recursive search.
+   * @param array $common_count
+   *   Count of founded depend entities.
+   *
+   * @return array
+   *   Return hierarchical array of dependency.
    */
-  public function dependEntities(EntityInterface $entity, $recursion = FALSE, &$common_count = []) {
-    $dep_entities = $this->getDependEntities($entity->getEntityTypeId(), $entity->id(), TRUE, $common_count);
+  public function dependEntities(EntityInterface $entity, $recursion = FALSE, array &$common_count = []) {
+    $dep_entities = $this->getDependEntities($entity->getEntityTypeId(), $entity->id(), $recursion, $common_count);
     if ($dep_entities && is_array($dep_entities)) {
       foreach ($dep_entities as $key => $entities) {
         if ($key == '#entity') {
@@ -211,13 +235,25 @@ class DependencyService {
   }
 
   /**
-   * Description.
+   * Search depended entities and build hierarchical array of dependency.
+   *
+   * @param string $entity_type_id
+   *   Entity type machine name.
+   * @param string $entity_id
+   *   Entity id.
+   * @param bool $recursion
+   *   Recursive search.
+   * @param array $entity_used
+   *   Array of founding entities. Used to avoid infinite recursion.
+   *
+   * @return mixed
+   *   Return array of entities or $entity_id if there are no dependencies.
    */
-  protected function getDependEntities($entity_type_id, $entity_id, $recursion = FALSE, &$entity_used = []) {
-    if (in_array($entity_type_id . '_' . $entity_id, $entity_used)) {
+  protected function getDependEntities($entity_type_id, $entity_id, $recursion = FALSE, array &$entity_used = []) {
+    if (in_array($entity_type_id . '__' . $entity_id, $entity_used)) {
       return $entity_id;
     }
-    $entity_used[] = $entity_type_id . '_' . $entity_id;
+    $entity_used[] = $entity_type_id . '__' . $entity_id;
 
     $allowed_entity_type = $this->getAllowedEntityType();
     if (!$allowed_entity_type) {
@@ -235,12 +271,13 @@ class DependencyService {
       if (!$recursion) {
         foreach ($result as $row) {
           $dep_entities[$row->entity_type_id][$row->entity_id] = $row->entity_id;
+          $entity_used[] = $row->entity_type_id . '__' . $row->entity_id;
         }
         return $dep_entities;
       }
       else {
         foreach ($result as $row) {
-          $dep_entities[$row->entity_type_id][$row->entity_id] = $this->getDependEntities($row->entity_type_id, $row->entity_id, TRUE, $entity_used);
+          $dep_entities[$row->entity_type_id][$row->entity_id] = $this->getDependEntities($row->entity_type_id, $row->entity_id, $recursion, $entity_used);
         }
         return $dep_entities;
       }
@@ -249,7 +286,12 @@ class DependencyService {
   }
 
   /**
-   * Description.
+   * Load entities and save hierarchy structure of array.
+   *
+   * @param string $entity_type
+   *   Entity type of $all_entities array's key.
+   * @param array $all_entities
+   *   Hierarchical array of entities.
    */
   protected function loadEntities($entity_type, array &$all_entities) {
     $entity_to_load = [];
@@ -277,13 +319,23 @@ class DependencyService {
   }
 
   /**
-   * Description.
+   * Return entity types which user allowed to delete.
+   *
+   * @return array|mixed|null
+   *   Array of entity type machine names.
    */
   protected function getAllowedEntityType() {
     if ($this->allowedEntityTypes) {
       return $this->allowedEntityTypes;
     }
     return $this->allowedEntityTypes = $this->configFactory->get('entity_ref_dependency.allow_delete')->get('allowed_entity_types');
+  }
+
+  /**
+   * Delete all table data.
+   */
+  public function clearStorage() {
+    $this->database->truncate('entity_ref_dependency')->execute();
   }
 
 }

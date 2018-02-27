@@ -52,15 +52,16 @@ function entity_ref_dependency_entity_predelete(EntityInterface $entity) {
  * Implements hook_form_alter().
  */
 function entity_ref_dependency_form_alter(&$form, FormStateInterface $form_state, $form_id) {
-  $depend_config = \Drupal::config('entity_ref_dependency.allow_delete')->get('allow_cascade_delete');
-  if (!$depend_config) {
-    return;
-  }
-
   $form_object = $form_state->getFormObject();
   $class = 'Drupal\Core\Entity\ContentEntityConfirmFormBase';
 
   if (is_subclass_of($form_object, $class)) {
+    $permission = \Drupal::currentUser()->hasPermission('dependent entities deletion');
+    $depend_config = \Drupal::config('entity_ref_dependency.allow_delete')->get('allow_cascade_delete');
+    if (!$depend_config || !$permission) {
+      return;
+    }
+
     $entity = $form_object->getEntity();
     $entity_info = \Drupal::service('entity_ref_dependency.entity_info');
     $allow_entity = $entity_info->getFieldableEntities();
@@ -80,13 +81,38 @@ function entity_ref_dependency_form_alter(&$form, FormStateInterface $form_state
         ];
         return;
       }
+
+      $items = \Drupal::service('database')->select('queue', 'q')
+        ->condition('q.name', 'entity_ref_delete_entities')
+        ->fields('q', ['item_id', 'data'])
+        ->execute();
+      $rows = $items->fetchAll();
+      $queue_item_id = NULL;
+      foreach ($rows as $row) {
+        $data = unserialize($row->data);
+        if ($data->sourceEntity == $type . '__' . $entity->id()) {
+          $queue_item_id = $row->item_id;
+        }
+      }
+
       $form_state->addBuildInfo('entities_to_delete', $common_count);
       $alert = entity_ref_dependency_message_alert($dep_entities, $common_count);
-      $alert['cascade_delete'] = [
-        '#type' => 'submit',
-        '#value' => t("Delete with all dependencies"),
-        '#submit' => ['entity_ref_dependency_cascade_delete_submit'],
-      ];
+
+      if (!$queue_item_id) {
+        $alert['cascade_delete'] = [
+          '#type' => 'submit',
+          '#value' => t("Delete all dependencies"),
+          '#submit' => ['entity_ref_dependency_cascade_delete_submit'],
+        ];
+      }
+      else {
+        $form_state->addBuildInfo('queue_item_id', $queue_item_id);
+        $alert['cancel_delete'] = [
+          '#type' => 'submit',
+          '#value' => t("Cancel dependencies deleting"),
+          '#submit' => ['entity_ref_dependency_cancel_delete_submit'],
+        ];
+      }
       $form['alert_dependency'] = $alert;
     }
   }
@@ -122,7 +148,7 @@ function entity_ref_dependency_message_alert($dep_entities, $common_count) {
 }
 
 /**
- * Description.
+ * Count number of entities in each level of dependency.
  */
 function entity_ref_dependency_count_entities_recursive(&$entities, &$entities_type = []) {
   foreach ($entities as $key => $entity) {
@@ -163,7 +189,7 @@ function entity_ref_dependency_count_entities_recursive(&$entities, &$entities_t
 }
 
 /**
- * Description.
+ * Build list items.
  */
 function entity_ref_dependency_message_items($entity_type_bundle, &$count) {
   $entity_type_bundle = explode("__", $entity_type_bundle);
@@ -194,4 +220,40 @@ function entity_ref_dependency_message_items($entity_type_bundle, &$count) {
     }
   }
   return $item;
+}
+
+/**
+ * Add new queue item for entities deleting.
+ */
+function entity_ref_dependency_cascade_delete_submit(&$form, FormStateInterface $form_state) {
+  $build_info = $form_state->getBuildInfo();
+  if (isset($build_info['entities_to_delete'])) {
+    /** @var QueueFactory $queue_factory */
+    $queue_factory = \Drupal::service('queue');
+    /** @var QueueInterface $queue */
+    $queue = $queue_factory->get('entity_ref_delete_entities');
+    $item = new \stdClass();
+    $form_object = $form_state->getFormObject();
+    $entity = $form_object->getEntity();
+    $item->sourceEntity = $entity->getEntityTypeId() . '__' . $entity->id();
+    $item->depEntities = $build_info['entities_to_delete'];
+    $queue->createItem($item);
+  }
+  drupal_set_message(t('Depend entities will be deleted after cronjob'));
+}
+
+/**
+ * Remove item from queue for cancel entities deleting.
+ */
+function entity_ref_dependency_cancel_delete_submit(&$form, FormStateInterface $form_state) {
+  $build_info = $form_state->getBuildInfo();
+  try {
+    \Drupal::service('database')->delete('queue')
+      ->condition('item_id', $build_info['queue_item_id'])
+      ->execute();
+    drupal_set_message(t('Deleting of dependencies was cancelled'));
+  }
+  catch (\Exception $e) {
+    _drupal_exception_handler($e);
+  }
 }

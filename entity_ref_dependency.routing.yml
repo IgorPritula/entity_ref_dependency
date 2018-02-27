@@ -4,4 +4,4 @@ entity_ref_dependency.erd_configuration:
     _form: '\Drupal\entity_ref_dependency\Form\DependencyConfigForm'
     _title: 'Entity Reference Dependency'
   requirements:
-    _permission: 'access administration pages'
+    _permission: 'access administration pages, dependent entities deletion'
